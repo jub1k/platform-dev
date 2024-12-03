@@ -1,0 +1,6 @@
+dev_rfc.log
+platform-development.iml
+.idea
+logs
+sudo
+.docker/php84/.env

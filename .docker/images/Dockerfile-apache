@@ -1,0 +1,31 @@
+FROM httpd:2.4-bookworm
+
+# Habilitar los módulos necesarios y configurar el host virtual
+RUN set -eux; \
+        # Remove existing sources and create new configuration
+        rm -f /etc/apt/sources.list.d/debian.sources; \
+        { \
+            echo 'Types: deb'; \
+            echo 'URIs: https://deb.debian.org/debian'; \
+            echo 'Suites: bookworm bookworm-updates'; \
+            echo 'Components: main'; \
+            echo 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg'; \
+            echo ''; \
+            echo 'Types: deb'; \
+            echo 'URIs: https://deb.debian.org/debian-security'; \
+            echo 'Suites: bookworm-security'; \
+            echo 'Components: main'; \
+            echo 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg'; \
+        } > /etc/apt/sources.list.d/debian.sources; \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libapache2-mod-fcgid \
+    && rm -rf /var/lib/apt/lists/*
+
+    RUN echo "LoadModule proxy_module modules/mod_proxy.so" >> /usr/local/apache2/conf/httpd.conf \
+    && echo "LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so" >> /usr/local/apache2/conf/httpd.conf \
+    && echo "Include /usr/local/apache2/conf/extra/httpd-fpm.conf" >> /usr/local/apache2/conf/httpd.conf
+
+
+COPY ./.configuration/httpd.conf/extra/httpd-fpm.conf /usr/local/apache2/conf/extra/
+COPY ./.configuration/httpd.conf/httpd.conf /usr/local/apache2/conf/

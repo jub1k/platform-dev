@@ -1,0 +1,111 @@
+FROM php:8.4-fpm-bookworm
+
+WORKDIR /var/www/html
+
+ARG node_version=v22.11.0
+ENV PATH=/opt/node-${node_version}-linux-x64/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/oracle/instantclient_21_16
+ENV SAPNWRFC_HOME=/usr/sap/nwrfcsdk
+
+RUN set -eux; \
+    # Remove existing sources and create new configuration
+    rm -f /etc/apt/sources.list.d/debian.sources; \
+    { \
+        echo 'Types: deb'; \
+        echo 'URIs: https://deb.debian.org/debian'; \
+        echo 'Suites: bookworm bookworm-updates'; \
+        echo 'Components: main'; \
+        echo 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg'; \
+        echo ''; \
+        echo 'Types: deb'; \
+        echo 'URIs: https://deb.debian.org/debian-security'; \
+        echo 'Suites: bookworm-security'; \
+        echo 'Components: main'; \
+        echo 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg'; \
+    } > /etc/apt/sources.list.d/debian.sources; \
+    # Update and install packages in a single layer
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        apt-transport-https \
+        git \
+        python3 \
+        libxml2-dev \
+        libssl-dev \
+        libgd-dev \
+        libzip-dev \
+        libfreetype6-dev  \
+        libjpeg62-turbo-dev  \
+        libpng-dev \
+        libjpeg-dev \
+        libicu-dev \
+        build-essential  \
+        libaio1 \
+        libaio-dev \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+# Instalar Oracle Instant Client y SAP NWRFC SDK
+RUN set -eux; \
+    mkdir -p /opt/oracle /usr/sap; \
+    # Descargar paquetes en paralelo y con manejo de errores
+    curl -fsSL https://download.oracle.com/otn_software/linux/instantclient/2116000/instantclient-basic-linux.x64-21.16.0.0.0dbru.zip -o /tmp/instantclient-basic.zip \
+    && curl -fsSL https://download.oracle.com/otn_software/linux/instantclient/2116000/instantclient-sdk-linux.x64-21.16.0.0.0dbru.zip -o /tmp/instantclient-sdk.zip \
+    && curl -fsSL https://github.com/j-atrujillo/nwrfc/raw/main/nwrfc750P_9-70002752.zip -o /tmp/nwrfc.zip \
+    # Descomprimir con control de errores y modo no interactivo
+    && unzip -q -o /tmp/instantclient-basic.zip -d /opt/oracle \
+    && unzip -q -o /tmp/instantclient-sdk.zip -d /opt/oracle \
+    && unzip -q -o /tmp/nwrfc.zip -d /usr/sap \
+    # Mover y renombrar directorios para cumplir con requisitos
+    #&& mv /opt/oracle/instantclient_21_16 /opt/oracle/instantclient \
+    # Limpiar archivos temporales
+    && rm /tmp/*.zip \
+    # Configurar bibliotecas
+    && echo "/opt/oracle/instantclient_21_16" >> /etc/ld.so.conf.d/oracle.conf \
+    && echo "/usr/sap/nwrfcsdk/lib" >> /etc/ld.so.conf.d/nwrfcsdk.conf \
+    && ldconfig
+
+# Variables de entorno
+ENV LD_LIBRARY_PATH="/opt/oracle/instantclient_21_16:/usr/sap/nwrfcsdk/lib:$LD_LIBRARY_PATH" \
+    PATH="/opt/oracle/instantclient_21_16:$PATH" \
+    ORACLE_HOME="/opt/oracle/instantclient_21_16"
+
+
+RUN touch /etc/ld.so.conf.d/nwrfcsdk.conf \
+    && echo "/usr/sap/nwrfcsdk/lib" >> /etc/ld.so.conf.d/nwrfcsdk.conf \
+    && ldconfig \
+    && cd /tmp && \
+       curl -L https://github.com/gkralik/php7-sapnwrfc/archive/refs/tags/2.1.0.zip --output /tmp/php7-sapnwrfc-2.1.0.zip && \
+       unzip /tmp/php7-sapnwrfc-2.1.0.zip && \
+       cd php7-sapnwrfc-2.1.0 && \
+       phpize && \
+       ./configure && \
+       make && \
+       make install
+
+
+# Instalar OCI8 desde PECL
+# Instalar la extensión oci8 con Instant Client
+# Instalar la extensión oci8 con Instant Client
+RUN echo "instantclient,/opt/oracle/instantclient_21_16" | pecl install oci8-3.0.1 && docker-php-ext-enable oci8
+
+RUN echo "instantclient,/opt/oracle/instantclient_21_16" | pecl install pdo_oci && docker-php-ext-enable pdo_oci
+
+# Instalar Xdebug
+RUN pecl install xdebug && docker-php-ext-enable xdebug
+RUN docker-php-ext-configure gd --with-jpeg
+RUN pecl install zip && docker-php-ext-enable zip
+
+# Configuración adicional (si es necesario)
+RUN docker-php-ext-enable sapnwrfc zip
+
+# Configuración de Xdebug
+#COPY ./xdebug.ini /usr/local/etc/php/conf.d/xdebug.ini
+
+COPY ./.configuration/php/conf.d/xdebug.ini /usr/local/etc/php/conf.d/
+COPY ./.configuration/php/php.ini /usr/local/etc/php/
+
+
+# Exponer el puerto 8080 para el servidor interno de PHP
+EXPOSE 9000
